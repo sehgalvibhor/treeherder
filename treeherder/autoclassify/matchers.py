@@ -76,7 +76,8 @@ class CrashSignatureMatcher(Matcher):
     def __call__(self, failure_lines):
         rv = []
         for failure_line in failure_lines:
-            if failure_line.action != "crash" or failure_line.signature is None:
+            if (failure_line.action != "crash" or failure_line.signature is None
+                or failure_line.signature == "None"):
                 continue
             newrelic.agent.add_custom_parameter("test", failure_line.test)
             newrelic.agent.add_custom_parameter("signature", failure_line.signature)
