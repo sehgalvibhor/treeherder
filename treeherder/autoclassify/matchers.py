@@ -3,6 +3,7 @@ from abc import (ABCMeta,
                  abstractmethod)
 from collections import namedtuple
 
+import newrelic.agent
 from django.db.models import Q
 
 from treeherder.model.models import (FailureMatch,
@@ -45,6 +46,11 @@ class PreciseTestMatcher(Matcher):
             logger.debug("Looking for test match in failure %d" % failure_line.id)
 
             if failure_line.action == "test_result":
+                newrelic.agent.add_custom_parameter("test", failure_line.test)
+                newrelic.agent.add_custom_parameter("subtest", failure_line.subtest)
+                newrelic.agent.add_custom_parameter("status", failure_line.status)
+                newrelic.agent.add_custom_parameter("expected", failure_line.expected)
+                newrelic.agent.add_custom_parameter("message", failure_line.message)
                 matching_failures = FailureMatch.objects.filter(
                     failure_line__action="test_result",
                     failure_line__test=failure_line.test,
@@ -72,6 +78,8 @@ class CrashSignatureMatcher(Matcher):
         for failure_line in failure_lines:
             if failure_line.action != "crash" or failure_line.signature is None:
                 continue
+            newrelic.agent.add_custom_parameter("test", failure_line.test)
+            newrelic.agent.add_custom_parameter("signature", failure_line.signature)
             matching_failures = FailureMatch.objects.filter(
                 failure_line__action="crash",
                 failure_line__signature=failure_line.signature).exclude(
