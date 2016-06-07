@@ -2,6 +2,7 @@ import logging
 from abc import (ABCMeta,
                  abstractmethod)
 from collections import namedtuple
+from datetime import datetime, timedelta
 
 import newrelic.agent
 from django.db.models import Q
@@ -42,6 +43,7 @@ class PreciseTestMatcher(Matcher):
 
     def __call__(self, failure_lines):
         rv = []
+        date_cutoff = datetime.today().date() - timedelta(days=14)
         for failure_line in failure_lines:
             logger.debug("Looking for test match in failure %d" % failure_line.id)
 
@@ -60,6 +62,8 @@ class PreciseTestMatcher(Matcher):
                     failure_line__message=failure_line.message).exclude(
                         ignored_line | Q(failure_line__job_guid=failure_line.job_guid)
                     ).order_by("-score", "-classified_failure")
+                matching_failures = matching_failures.filter(
+                    failure_line__created__gt=date_cutoff)
 
                 best_match = matching_failures.first()
                 if best_match:
@@ -75,6 +79,7 @@ class CrashSignatureMatcher(Matcher):
 
     def __call__(self, failure_lines):
         rv = []
+        date_cutoff = datetime.today().date() - timedelta(days=14)
         for failure_line in failure_lines:
             if (failure_line.action != "crash" or failure_line.signature is None
                 or failure_line.signature == "None"):
@@ -88,6 +93,9 @@ class CrashSignatureMatcher(Matcher):
                 ).select_related('failure_line').order_by(
                     "-score",
                     "-classified_failure")
+            matching_failures = matching_failures.filter(
+                failure_line__created__gt=date_cutoff)
+
             matching_failures_same_test = matching_failures.filter(
                 failure_line__test=failure_line.test)
             best_match = matching_failures_same_test.first()
