@@ -10,7 +10,8 @@ import newrelic.agent
 from django.db.models import Q
 
 from treeherder.autoclassify.management.commands.autoclassify import AUTOCLASSIFY_GOOD_ENOUGH_RATIO
-from treeherder.model.models import (FailureMatch,
+from treeherder.model.models import (FailureLine,
+                                     FailureMatch,
                                      MatcherManager)
 
 logger = logging.getLogger(__name__)
@@ -40,19 +41,22 @@ ignored_line = (Q(failure_line__best_classification=None) &
                 Q(failure_line__best_is_verified=True))
 
 
-def date_window(queryset, interval, time_budget_ms, match_filter):
-    lower_cutoff = datetime.today().date() - interval
-    upper_cutoff = None
+def time_window(queryset, interval, time_budget_ms, match_filter):
+    upper_cutoff = datetime.now()
+    lower_cutoff = upper_cutoff - interval
     matches = []
 
     time_budget = time_budget_ms / 1000.
     t0 = time.time()
+
+    min_date = FailureLine.objects.order_by("id")[0].created
+
+    count = 0
     while time.time() - t0 < time_budget:
+        count += 1
         window_queryset = queryset.filter(
-            failure_line__created__gt=lower_cutoff)
-        if upper_cutoff:
-            window_queryset = queryset.filter(
-                failure_line__created__lte=upper_cutoff)
+            failure_line__created__range=(lower_cutoff, upper_cutoff))
+        logger.error("[time_window] Queryset: %s" % window_queryset.query)
         match = window_queryset.first()
         if match is not None:
             matches.append(match)
@@ -60,6 +64,9 @@ def date_window(queryset, interval, time_budget_ms, match_filter):
                 break
         upper_cutoff = lower_cutoff
         lower_cutoff = upper_cutoff - interval
+        if upper_cutoff < min_date:
+            break
+    logger.error("[time_window] Used %i queries" % count)
     if matches:
         matches.sort(key=match_filter)
         return matches[0]
@@ -77,7 +84,7 @@ class PreciseTestMatcher(Matcher):
             logger.debug("Looking for test match in failure %d" % failure_line.id)
 
             if failure_line.action != "test_result" or failure_line.message is None:
-                return
+                continue
             newrelic.agent.add_custom_parameter("test", failure_line.test)
             newrelic.agent.add_custom_parameter("subtest", failure_line.subtest)
             newrelic.agent.add_custom_parameter("status", failure_line.status)
@@ -93,7 +100,7 @@ class PreciseTestMatcher(Matcher):
                     ignored_line | Q(failure_line__job_guid=failure_line.job_guid)
                 ).order_by("-score", "-classified_failure")
 
-            best_match = date_window(matching_failures, timedelta(days=7), 500,
+            best_match = time_window(matching_failures, timedelta(days=7), 500,
                                      lambda x: (-x.score, -x.classified_failure_id))
             if best_match:
                 logger.debug("Matched using precise test matcher")
@@ -127,10 +134,10 @@ class CrashSignatureMatcher(Matcher):
 
             matching_failures_same_test = matching_failures.filter(
                 failure_line__test=failure_line.test)
-            best_match = date_window(matching_failures_same_test, timedelta(days=7), 250,
+            best_match = time_window(matching_failures_same_test, timedelta(days=7), 250,
                                      lambda x: (-x.score, -x.classified_failure_id))
             if not best_match:
-                best_match = date_window(matching_failures, timedelta(days=7), 250,
+                best_match = time_window(matching_failures, timedelta(days=7), 250,
                                          lambda x: (-x.score, -x.classified_failure_id))
                 best_match = matching_failures.first()
             if best_match:
